@@ -58,7 +58,7 @@ struct satparam
 {
 	satparam()
 	{
-		itm_B(0, 0) = 300; itm_B(1, 1) = 200; itm_B(2, 2) = 100;  // inertia tensor
+		itm_B(0, 0) = 100; itm_B(1, 1) = 100; itm_B(2, 2) = 100;  // inertia tensor
 		itm_B(0, 1) = itm_B(0, 2) = itm_B(1, 0) = itm_B(1, 2) = itm_B(2, 0) = itm_B(2, 1) = 0;
 	}
 	Eigen::Matrix3d itm_B;  //inertia tensor matrix
