@@ -58,7 +58,7 @@ struct satparam
 {
 	satparam()
 	{
-		itm_B(0, 0) = 100; itm_B(1, 1) = 100; itm_B(2, 2) = 100;  // inertia tensor
+		itm_B(0, 0) = 250; itm_B(1, 1) = 250; itm_B(2, 2) = 100;  // inertia tensor
 		itm_B(0, 1) = itm_B(0, 2) = itm_B(1, 0) = itm_B(1, 2) = itm_B(2, 0) = itm_B(2, 1) = 0;
 	}
 	Eigen::Matrix3d itm_B;  //inertia tensor matrix
@@ -132,64 +132,66 @@ double YacobiIntegral(const orbparam& orb, const satparam& sat, double t, const 
 
 void output(const satparam& sat, const orbparam& orb, const double t, const Array& x, OutArray* out)
 {
+
 	Vector4d q = { x[0], x[1], x[2], x[3] };
+	Vector4d q_c = { x[0], -x[1], -x[2], -x[3] };
 	Vector3d omega = { x[4], x[5], x[6] };
 
 	Vector3d K_B, eK_B;
 	K_B = sat.itm_B * omega;
-	eK_B = K_B / sqrt(K_B(0) * K_B(0) + K_B(1) * K_B(1) + K_B(2) * K_B(2));
+	eK_B = K_B / K_B.norm();
 
 	Vector3d eXpg_B, eYpg_B, eZpg_B;
 	eXpg_B = rotateByQ(q, { 1, 0, 0 });
 	eYpg_B = rotateByQ(q, { 0, 1, 0 });
 	eZpg_B = rotateByQ(q, { 0, 0, 1 });
 
+	Vector3d el1_pg, el1_B, el2_pg, el2_B;
+	el2_B = eZpg_B.cross(eK_B);
+	el2_B.normalize();
+	el2_pg = rotateByQ(q_c, el2_B);
+	el1_B = el2_B.cross(eK_B);
+	el1_B.normalize();
+
 	double rho = acos(eK_B.dot(eZpg_B));
 	double sin_rho = sin(rho);
 	double tetta = acos(eK_B(2));
-	double sigma_s, cos_sigma_s, sin_sigma_s;
-	
-	if (abs(sin_rho) <= 1e-5)
-	{
+	double sigma_s;
+
+	if (abs(sin_rho) <= 1e-5) {
 		sigma_s = 0;
 	}
-	else
-	{
-		cos_sigma_s = (eK_B.dot(eXpg_B)) / sin_rho;
-		sin_sigma_s = (eK_B.dot(eYpg_B)) / sin_rho;
-
-		if (abs(cos_sigma_s) > 1)
-			sigma_s = 0.5 * PI * (1 - sign(cos_sigma_s));
+	else {
+		double atn = atan2(el2_pg[1], el2_pg[0]) - PI / 2;
+		if (atn < 0)
+			sigma_s = atn + 2 * PI;
 		else
-			if (sin_sigma_s < 0)
-				sigma_s = PI - acos(cos_sigma_s);
-			else
-				sigma_s = acos(cos_sigma_s);
+			sigma_s = atn;
 	}
 
-	Vector3d el1_pg, el1_B, el2_pg, el2_B;
-	//el1_SO = { cos(rho) * cos(sigma_s), cos(rho) * sin(sigma_s), -sin(rho) }; 
-	//el1_B = rotateByQ(q, el1_pg); //wrong value
-	el2_pg = { -sin(sigma_s), cos(sigma_s), 0 };
-	el2_B = rotateByQ(q, el2_pg);
-	el1_B = el2_B.cross(eK_B);
-
-	double psi;
+	double psi, sin_psi, cos_psi;
 	if (abs(sin(tetta)) <= 1e-5)
 		psi = acos(el1_B(0));
 	else
-		psi = atan(-el1_B(2) / eK_B(2));
+		sin_psi = el1_B(2) / sin(tetta);
+		cos_psi = -el2_B(2) / sin(tetta);
 
-	(*out)[0] = t / 86400;
-	(*out)[1] = sigma_s / deg2rad;
-	(*out)[2] = rho / deg2rad;
-	(*out)[3] = psi / deg2rad;
-	(*out)[4] = tetta / deg2rad;
-	/*
-	(*out)[2] = el1_B(0);
-	(*out)[3] = el1_B(1);
-	(*out)[4] = el1_B(2);
-	*/
+		if (abs(cos_psi) > 1)
+			psi = 0.5 * PI * (1 - sign(cos_psi));
+		else
+			if (sin_psi < 0)
+				psi = 2*PI - acos(cos_psi);
+			else
+				psi = acos(cos_psi);
+
+	(*out)[0] = t;
+	(*out)[1] = rho/deg2rad;
+	(*out)[2] = sigma_s/deg2rad;
+	(*out)[3] = tetta/deg2rad;
+	(*out)[4] = psi / deg2rad;
+	//(*out)[3] = sin_psi;
+	//(*out)[4] = cos_psi;
+
 }
 
 int main()
@@ -201,28 +203,40 @@ int main()
 	OutArray x_out;
 
 	orb.mu = 3.986e14;     //the Earth gravity constant
-	orb.a_major = 1340000; //semi-major axis
+	//orb.a_major = 1340000; //semi-major axis
 	orb.eccentricity = 0;
-	orb.w0 = sqrt(orb.mu)/sqrt(orb.a_major* orb.a_major* orb.a_major);
+	//orb.w0 = sqrt(orb.mu)/sqrt(orb.a_major* orb.a_major* orb.a_major);
+	orb.w0 = 2 * PI / 5400;
 	orb.w02 = orb.w0 * orb.w0;
+	orb.a_major = pow(orb.mu/ orb.w02, 1.0 / 3.0);//semi-major axis
 
 	//Initial conditions
 	double sigma_0, ro_0, psi_0, fi_0, tetta_0;
-	sigma_0 = 30*deg2rad;
-	ro_0 = 120 * deg2rad;
-	psi_0 = 0;
-	tetta_0 = 0;
-	fi_0 = 0;
-	double mod_omega_0 = 1; //module of omega_0
+	sigma_0 = 12*deg2rad;
+	ro_0 = 50 * deg2rad;
+	psi_0 = 75 * deg2rad;
+	tetta_0 = 30 * deg2rad;
+	fi_0 = 20 * deg2rad; // если tetta_0 = PI*k, то fi_0 = 0 
+	double mod_omega_0 = orb.w0 * 10; //module of omega_0
 	double nu_0 = 0; //initial value of true anomaly
 
 	//initial value of omega
-	Vector3d omega_0 = { mod_omega_0*sin(tetta_0)*sin(fi_0), mod_omega_0*sin(tetta_0)*cos(fi_0), mod_omega_0*cos(tetta_0) };
+	//Vector3d omega_0 = { mod_omega_0*sin(tetta_0)*sin(fi_0), mod_omega_0*sin(tetta_0)*cos(fi_0), mod_omega_0*cos(tetta_0) };
+	
+	//Поиск omega_0 по известным углам и ее модулю
+	Eigen::Matrix3d itm_B_inv; 
+	itm_B_inv(0, 0) = 1/sat.itm_B(0, 0); itm_B_inv(1, 1) = 1/sat.itm_B(1, 1); itm_B_inv(2, 2) = 1/sat.itm_B(2, 2);  // inertia tensor
+	itm_B_inv(0, 1) = itm_B_inv(0, 2) = itm_B_inv(1, 0) = itm_B_inv(1, 2) = itm_B_inv(2, 0) = itm_B_inv(2, 1) = 0;
+	Vector3d e_K = { sin(tetta_0)*sin(fi_0), sin(tetta_0)*cos(fi_0), cos(tetta_0) };
+	Vector3d e_omega = itm_B_inv * e_K * (1/ mod_omega_0);
+	double e_omega_norm = sqrt(e_omega[0] * e_omega[0] + e_omega[1] * e_omega[1] + e_omega[2] * e_omega[2]);
+	for (int i = 0; i < 3; i++) e_omega[i] = e_omega[i] / e_omega_norm;
+	Vector3d omega_0 = e_omega * mod_omega_0;
 
 	//calculation of the initial quaternion value
 	Vector4d q_1, q_2, q_3, q_4, q_5, q_6, q_7, q_8, q_0;
 	q_1 = { cos(sigma_0 / 2), 0, 0, sin(sigma_0 / 2) };
-	q_2 = { cos(ro_0 / 2), 0, -sin(ro_0 / 2), 0 };
+	q_2 = { cos(ro_0 / 2), 0, sin(ro_0 / 2), 0 };
 	q_3 = quatproduct(q_1, q_2);
 	q_4 = { cos(psi_0 / 2), 0, 0, sin(psi_0 / 2) };
 	q_5 = quatproduct(q_3, q_4);
@@ -236,6 +250,8 @@ int main()
 	x[1] = q_0[1];
 	x[2] = q_0[2]; 
 	x[3] = q_0[3];
+	//cout << x[0] << " " << x[1] << " " << x[2] << " " << x[3] << endl;
+
 	x[4] = omega_0[0];
 	x[5] = omega_0[1];
 	x[6] = omega_0[2];
@@ -244,27 +260,27 @@ int main()
 	//integrator parameters
 	double t = 0;
 	double h = 1;
-	double t_end = 0.4 * years2sec;
-	double t_save = 100;
+	//double t_end = 0.4 * years2sec;
+	double t_end = 40000;
+	double t_save = 1;
 	int save_counter = 0;
 
 	std::cout.precision(6);
 	std::cout.setf(std::ios::fixed);
 	std::ofstream  resultFile("object.csv");
-	
-	//cout << t << " " << x[0] << " " << x[1] << " " << x[2] << " " << x[3] << " " << x[4] << " " << x[5] << " " << x[6] << " " << x[7] << endl;
-	//cout << t << "," << YacobiIntegral(orb, sat, t, x) << endl;
 
 	while (t < t_end)
 	{
 		double q_norm = sqrt(x[0] * x[0] + x[1] * x[1] + x[2] * x[2] + x[3] * x[3]);
 		for (int i = 0; i < 4; i++) x[i] = x[i] / q_norm;
+		//
 		if (t >= save_counter * t_save)
 		{
 			output(sat, orb, t, x, &x_out);
+			//cout << x_out[0] << " " << x_out[1] << " " << x_out[2] <<" "<< x_out[3] << " " << x_out[4] << endl;
 			resultFile << setprecision(8) << x_out[0] << "," << x_out[1] << "," << x_out[2] << "," << x_out[3] << "," << x_out[4] << "," << YacobiIntegral(orb, sat, t, x) << endl;
 			//cout << t << "," << YacobiIntegral(orb, sat, t, x) << endl;
-			cout << x_out[0] << " " << x_out[1] << " " << x_out[2] << " " << x_out[3] << " " << x_out[4] << " " << YacobiIntegral(orb, sat, t, x) << endl;
+			//cout << x_out[0] << " " << x_out[1] << " " << x_out[2] << " " << x_out[3] << " " << x_out[4] << " " << YacobiIntegral(orb, sat, t, x) << endl;
 			save_counter += 1;
 		}
 		integrator.rk78(&t, &x, &h, 1e-9, 1e-3, 1e+3, [&sat, &orb](const double t, const Array& x, Array* dx) { rhside(sat, orb, t, x, dx); });
