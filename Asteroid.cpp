@@ -83,6 +83,7 @@ void rhside(const satparam& sat, const orbparam& orb, const double t, const Arra
 	//gravity gradient torque
 	Vector3d Tgg;
 	Tgg = 3 * (orb.w02) * eccos * eccos * eccos * eRorb_B.cross(sat.itm_B * eRorb_B)/ ecc_param3;
+	//Tgg = { 0, 0 ,0 };
 
 	//gyroscpoic term
 	Vector3d wJw;
@@ -90,7 +91,7 @@ void rhside(const satparam& sat, const orbparam& orb, const double t, const Arra
 	omega_dot = sat.itm_B.inverse() * (-wJw + Tgg);
 
 	//true anomaly term
-	double dnu = orb.w0 / (eccos *sqrt(ecc_param3)); 
+	double dnu = orb.w0 * eccos * eccos / (sqrt(ecc_param3));
 
 	(*dx)[0] = 0.5 * (-q[1] * omega[0] - q[2] * omega[1] - q[3] * omega[2]);
 	(*dx)[1] = 0.5 * (q[0] * omega[0] + q[2] * omega[2] - q[3] * omega[1]);
@@ -104,6 +105,7 @@ void rhside(const satparam& sat, const orbparam& orb, const double t, const Arra
 
 }
 
+//Only for circular orbits 
 double YacobiIntegral(const orbparam& orb, const satparam& sat, double t, const Array& x)
 {
 	Vector4d q = { x[0], x[1], x[2], x[3] };
@@ -122,7 +124,6 @@ double YacobiIntegral(const orbparam& orb, const satparam& sat, double t, const 
 	Vector3d wt = omega - orb.w0 * eZ_B; 
 	
 	double Tr, Vg, T0;
-
 	Tr = 0.5 * wt.transpose() * (sat.itm_B * wt);
 	Vg = 1.5 * orb.w02 * eRorb_B.transpose() * (sat.itm_B * eRorb_B);
 	T0 = 0.5 * orb.w02 * eZ_B.transpose() * (sat.itm_B * eRorb_B);
@@ -130,7 +131,7 @@ double YacobiIntegral(const orbparam& orb, const satparam& sat, double t, const 
 	return Tr + Vg - T0;
 }
 
-void output(const satparam& sat, const orbparam& orb, const double t, const Array& x, OutArray* out)
+void output(const satparam& sat, const orbparam& orb, const double ro_0, const double tetta_0, const double K0, const double t, const Array& x, OutArray* out)
 {
 
 	Vector4d q = { x[0], x[1], x[2], x[3] };
@@ -183,14 +184,51 @@ void output(const satparam& sat, const orbparam& orb, const double t, const Arra
 				psi = 2*PI - acos(cos_psi);
 			else
 				psi = acos(cos_psi);
+	/*
+	double tetta_test, psi_test, psi_test1;
+	psi_test = 75 * (double)deg2rad + t * (double)K0 / (double)sat.itm_B(0, 0);
+	//psi_test = 75 * deg2rad + t * 2.61/250.0;
+	//int n = psi_test / (2 * PI);
+	//if (n >= 1)
+		//psi_test = psi_test - 2 * PI * n;
+
+	double cos_psi_t, sin_psi_t;
+	cos_psi_t = cos(psi_test);
+	sin_psi_t = sin(psi_test);
+	psi_test = atan2(sin_psi_t, cos_psi_t);
+	if (psi_test < 0)
+		psi_test = psi_test + 2 * PI;
+	else
+		psi_test = psi_test;
+	*/
+
+	/*
+	double n;
+	double r;
+	r = modf(psi_test / (2 * PI), &n);
+	
+	if (n > 1)
+		psi_test -= 2 * PI * n ;
+		*/
+	//tetta_test = acos(sat.itm_B(2, 2) * omega(2) / K_B.norm());
+	
+	double sigma_test;
+	double ecc_3_2 = sqrt((1 - orb.eccentricity* orb.eccentricity) * (1 - orb.eccentricity* orb.eccentricity) * (1 - orb.eccentricity* orb.eccentricity));
+	sigma_test = 12 * deg2rad + t * (3*cos(tetta_0)* cos(tetta_0) - 1) * (0.75) * (sat.itm_B(0, 0) - sat.itm_B(2, 2)) * orb.w02 * cos(ro_0)/(K0*ecc_3_2);
+	int n = sigma_test / (2 * PI);
+	if (n >= 1)
+		sigma_test = sigma_test - 2 * PI * n;
 
 	(*out)[0] = t;
 	(*out)[1] = rho/deg2rad;
 	(*out)[2] = sigma_s/deg2rad;
+	//(*out)[1] = tetta_test / deg2rad;
+	//(*out)[1] = psi_test1;
+	//(*out)[2] = psi_test / deg2rad;
+	//(*out)[3] = sigma_test/deg2rad;
 	(*out)[3] = tetta/deg2rad;
+	//(*out)[3] = K_B.norm();
 	(*out)[4] = psi / deg2rad;
-	//(*out)[3] = sin_psi;
-	//(*out)[4] = cos_psi;
 
 }
 
@@ -209,6 +247,10 @@ int main()
 	orb.w0 = 2 * PI / 5400;
 	orb.w02 = orb.w0 * orb.w0;
 	orb.a_major = pow(orb.mu/ orb.w02, 1.0 / 3.0);//semi-major axis
+	//cout << orb.a_major << endl;
+	//cout << orb.w0 << endl;
+	//double T = 2 * PI / orb.w0;
+	//cout << T << endl;
 
 	//Initial conditions
 	double sigma_0, ro_0, psi_0, fi_0, tetta_0;
@@ -216,14 +258,15 @@ int main()
 	ro_0 = 50 * deg2rad;
 	psi_0 = 75 * deg2rad;
 	tetta_0 = 30 * deg2rad;
-	fi_0 = 20 * deg2rad; // если tetta_0 = PI*k, то fi_0 = 0 
-	double mod_omega_0 = orb.w0 * 10; //module of omega_0
+	fi_0 = 20 * deg2rad; // if tetta_0 = PI*k, then fi_0 = 0 
+
+	double mod_omega_0 = orb.w0 * 50; //module of omega_0
 	double nu_0 = 0; //initial value of true anomaly
 
-	//initial value of omega
+	//initial value of omega (for case then itm_B_inv(0, 0) = itm_B_inv(1, 1) = itm_B_inv(2, 2))
 	//Vector3d omega_0 = { mod_omega_0*sin(tetta_0)*sin(fi_0), mod_omega_0*sin(tetta_0)*cos(fi_0), mod_omega_0*cos(tetta_0) };
 	
-	//Поиск omega_0 по известным углам и ее модулю
+	//calculating omega_0 by using given angles and module of omega_0
 	Eigen::Matrix3d itm_B_inv; 
 	itm_B_inv(0, 0) = 1/sat.itm_B(0, 0); itm_B_inv(1, 1) = 1/sat.itm_B(1, 1); itm_B_inv(2, 2) = 1/sat.itm_B(2, 2);  // inertia tensor
 	itm_B_inv(0, 1) = itm_B_inv(0, 2) = itm_B_inv(1, 0) = itm_B_inv(1, 2) = itm_B_inv(2, 0) = itm_B_inv(2, 1) = 0;
@@ -231,6 +274,7 @@ int main()
 	Vector3d e_omega = itm_B_inv * e_K * (1/ mod_omega_0);
 	double e_omega_norm = sqrt(e_omega[0] * e_omega[0] + e_omega[1] * e_omega[1] + e_omega[2] * e_omega[2]);
 	for (int i = 0; i < 3; i++) e_omega[i] = e_omega[i] / e_omega_norm;
+
 	Vector3d omega_0 = e_omega * mod_omega_0;
 
 	//calculation of the initial quaternion value
@@ -244,6 +288,8 @@ int main()
 	q_7 = quatproduct(q_5, q_6);
 	q_8 = { cos(fi_0 / 2), 0, 0, sin(fi_0 / 2) };
 	q_0 = quatproduct(q_7, q_8); // initial quaternion value
+	double q0_norm = sqrt(q_0[0] * q_0[0] + q_0[1] * q_0[1] + q_0[2] * q_0[2] + q_0[3] * q_0[3]);
+	for (int i = 0; i < 4; i++) q_0[i] = q_0[i] / q0_norm;
 
 	//initial condition vector
 	x[0] = q_0[0];
@@ -257,27 +303,37 @@ int main()
 	x[6] = omega_0[2];
 	x[7] = nu_0;
 
+	Vector3d K_B0;
+	K_B0 = sat.itm_B * omega_0;
+	double K0 = K_B0.norm();
+
 	//integrator parameters
 	double t = 0;
 	double h = 1;
 	//double t_end = 0.4 * years2sec;
-	double t_end = 40000;
-	double t_save = 1;
+
+	double t_end = 1000000;
+	double t_save = 100;
 	int save_counter = 0;
 
 	std::cout.precision(6);
 	std::cout.setf(std::ios::fixed);
 	std::ofstream  resultFile("object.csv");
+	
+	//cout << t << " " << x[0] << " " << x[1] << " " << x[2] << " " << x[3] << " " << x[4] << " " << x[5] << " " << x[6] << " " << x[7] << endl;
+	//cout << t << "," << YacobiIntegral(orb, sat, t, x) << endl;
 
 	while (t < t_end)
 	{
 		double q_norm = sqrt(x[0] * x[0] + x[1] * x[1] + x[2] * x[2] + x[3] * x[3]);
 		for (int i = 0; i < 4; i++) x[i] = x[i] / q_norm;
-		//
+		//cout << t << " " << x[0] << " " << x[1] << " " << x[2] << " " << x[3] << " " << x[4] << " " << x[5] << " " << x[6] << " " << x[7] << endl;
+		//cout << YacobiIntegral(orb, sat, t, x) << endl;
 		if (t >= save_counter * t_save)
 		{
-			output(sat, orb, t, x, &x_out);
-			//cout << x_out[0] << " " << x_out[1] << " " << x_out[2] <<" "<< x_out[3] << " " << x_out[4] << endl;
+			output(sat, orb, ro_0, tetta_0, K0, t, x, &x_out);
+			//cout << x_out[0] << " " << x_out[1] << " " << x_out[2] <<" "<< x_out[3] << endl;
+			//cout << x_out[0] << endl;
 			resultFile << setprecision(8) << x_out[0] << "," << x_out[1] << "," << x_out[2] << "," << x_out[3] << "," << x_out[4] << "," << YacobiIntegral(orb, sat, t, x) << endl;
 			//cout << t << "," << YacobiIntegral(orb, sat, t, x) << endl;
 			//cout << x_out[0] << " " << x_out[1] << " " << x_out[2] << " " << x_out[3] << " " << x_out[4] << " " << YacobiIntegral(orb, sat, t, x) << endl;
@@ -291,7 +347,7 @@ int main()
 	double q_norm = sqrt(x[0] * x[0] + x[1] * x[1] + x[2] * x[2] + x[3] * x[3]);
 	for (int i = 0; i < 4; i++) x[i] = x[i] / q_norm;
 
-	output(sat, orb, t, x, &x_out);
+	//output(sat, orb, t, x, &x_out);
 	resultFile << setprecision(8) << x_out[0] << "," << x_out[1] << "," << x_out[2] << "," << x_out[3] << "," << x_out[4] << "," << YacobiIntegral(orb, sat, t, x) << endl;
 	resultFile.close();
 
